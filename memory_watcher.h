@@ -2,6 +2,8 @@
 #include <stdint.h>
 #include "callstack.h"
 
+/// https://github.com/KindDragon/vld
+
 struct memory_block
 {
     void* _start_ptr;
@@ -28,9 +30,9 @@ public:
 
     void on_shutdown();
 private:
-    uint32_t find_block(void* start_ptr); /// ²éÕÒËùÔÚµÄslotÏÂ±ê
+    uint32_t find_block(void* start_ptr); /// æŸ¥æ‰¾æ‰€åœ¨çš„slotä¸‹æ ‡
 
-    memory_block* _block_slots[1024 * 1024]; /// Ò»¸ö¿×·ÅÖÃ4kÄÚÈİ
+    memory_block* _block_slots[1024 * 1024]; /// ä¸€ä¸ªå­”æ”¾ç½®4kå†…å®¹
 private:
     void do_delay_free(bool force = false);
 
@@ -50,15 +52,17 @@ private:
 
     void block_pool_free(memory_block*);
 
-    memory_block* _block_header; /// ÄÚ´æ¿é·ÖÅäµÄÍ·²¿
+    memory_block* _block_header; /// å†…å­˜å—åˆ†é…çš„å¤´éƒ¨
 
-    memory_block _block_pool[1024 * 100]; /// ÄÚ´æÍ¬Ê±Ê¹ÓÃ×î´ó¿éÊı
+    memory_block _block_pool[1024 * 100]; /// å†…å­˜åŒæ—¶ä½¿ç”¨æœ€å¤§å—æ•°
 private:
     void output_memory_info(bool force = false);
 
     DWORD _last_output_time;
 
-    uint32_t _delay_free_block; /// Í³¼ÆĞÅÏ¢
+    uint32_t _not_freed_count;
+
+    uint32_t _delay_free_block; /// ç»Ÿè®¡ä¿¡æ¯
 
     uint32_t _delay_free_memory_size;
 
