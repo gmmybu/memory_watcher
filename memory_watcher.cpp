@@ -3,13 +3,16 @@
 #include "memory_watcher.h"
 #include "mhook-lib/mhook.h"
 
-#define GUARD_NUM 0xcf
+#define GUARD_NUM 0xcc
 
 typedef void* (*malloc_t)(size_t size);
+typedef void* (*calloc_t)(size_t n, size_t size);
 typedef void* (*realloc_t)(void* ptr, size_t size);
 typedef void  (*free_t)(void* ptr);
 
 malloc_t malloc_func;
+
+calloc_t calloc_func;
 
 realloc_t realloc_func;
 
@@ -62,6 +65,7 @@ BOOL WINAPI attach_to_module(PCWSTR modulepath, DWORD64 modulebase, ULONG module
 memory_watcher* _the_manager = nullptr;
 
 void* hook_malloc(size_t size);
+void* hook_calloc(size_t n, size_t size);
 void* hook_realloc(void* ptr, size_t size);
 void  hook_free(void* ptr);
 
@@ -84,6 +88,7 @@ bool hook_state_initialize()
 
     HMODULE module = LoadLibrary(L"msvcr110.dll");
     malloc_func = (malloc_t)GetProcAddress(module, "malloc");
+    calloc_func = (calloc_t)GetProcAddress(module, "calloc");
     realloc_func = (realloc_t)GetProcAddress(module, "realloc");
     free_func = (free_t)GetProcAddress(module, "free");
     if (malloc_func == nullptr || free_func == nullptr) {
@@ -97,6 +102,7 @@ bool hook_state_initialize()
     Mhook_SetHook((PVOID*)&free_func, hook_free);
     Mhook_SetHook((PVOID*)&realloc_func, hook_realloc);
     Mhook_SetHook((PVOID*)&malloc_func, hook_malloc);
+    Mhook_SetHook((PVOID*)&calloc_func, hook_calloc);
     _hook_state._initializing = false;
     _hook_state._enabled = true;
     return true;
@@ -126,7 +132,7 @@ void hook_state_prepare_stack_info()
 {
     pSymSetOptions(SYMOPT_LOAD_LINES | SYMOPT_UNDNAME);
 
-    wchar_t program[MAX_PATH] = { };
+    wchar_t program[MAX_PATH * 3] = { };
     GetModuleFileName(NULL, program, MAX_PATH);
 
     int prev = -1;
@@ -139,6 +145,8 @@ void hook_state_prepare_stack_info()
     if (prev != -1) {
         program[prev] = L'\0';
     }
+
+    wcscpy(program + wcslen(program), L";D:\Microsoft Visual Studio 11.0\VC\lib");
 
     if (!pSymInitializeW(GetCurrentProcess(), program, FALSE)) {
         OutputDebugStringA("SymInitialize\n");
@@ -173,10 +181,6 @@ void* hook_malloc(size_t size)
     if (_hook_state._initializing)
         return malloc_func(size);
 
-    SIZE_T* frame_pointer = NULL;
-    FRAMEPOINTER(frame_pointer)
-
-    auto_heap_guard guard(frame_pointer);
     if (size == 0) { size = 4; }
 
     uint8_t* data = (uint8_t*)malloc_func(size + 16);
@@ -184,9 +188,41 @@ void* hook_malloc(size_t size)
         return nullptr;
 
     for (size_t i = 0; i < 16; i++) {
-        data[size + i] = GUARD_NUM; /// ºÏ≤È‘ΩΩÁ–¥£¨œÚ«∞‘ΩΩÁµƒ±»Ωœ…Ÿº˚£¨«“‘› ±Œﬁ∑® µœ÷
+        data[size + i] = GUARD_NUM; /// Ê£ÄÊü•Ë∂äÁïåÂÜôÔºåÂêëÂâçË∂äÁïåÁöÑÊØîËæÉÂ∞ëËßÅÔºå‰∏îÊöÇÊó∂Êó†Ê≥ïÂÆûÁé∞
     }
 
+    SIZE_T* frame_pointer = NULL;
+    FRAMEPOINTER(frame_pointer);
+
+    auto_heap_guard guard(frame_pointer);
+    if (_hook_state._enabled) {
+        _the_manager->on_memory_alloc(data, size);
+    }
+
+    return data;
+}
+
+void* hook_calloc(size_t n, size_t size)
+{
+    if (_hook_state._initializing)
+        return calloc_func(n, size);
+
+    size *= n;
+
+    uint8_t* data = (uint8_t*)malloc_func(size + 16);
+    if (data == nullptr)
+        return nullptr;
+
+    memset(data, size, 0);
+
+    for (size_t i = 0; i < 16; i++) {
+        data[size + i] = GUARD_NUM; /// Ê£ÄÊü•Ë∂äÁïåÂÜôÔºåÂêëÂâçË∂äÁïåÁöÑÊØîËæÉÂ∞ëËßÅÔºå‰∏îÊöÇÊó∂Êó†Ê≥ïÂÆûÁé∞
+    }
+
+    SIZE_T* frame_pointer = NULL;
+    FRAMEPOINTER(frame_pointer);
+
+    auto_heap_guard guard(frame_pointer);
     if (_hook_state._enabled) {
         _the_manager->on_memory_alloc(data, size);
     }
@@ -207,18 +243,18 @@ void* hook_realloc(void* ptr, size_t size)
         return nullptr;
     }
 
-    SIZE_T* frame_pointer = NULL;
-    FRAMEPOINTER(frame_pointer)
-
-    auto_heap_guard guard(nullptr);
     uint8_t* data = (uint8_t*)realloc_func(ptr, size + 16);
     if (data == nullptr)
         return nullptr;
 
     for (size_t i = 0; i < 16; i++) {
-        data[size + i] = GUARD_NUM; /// ºÏ≤È‘ΩΩÁ–¥£¨œÚ«∞‘ΩΩÁµƒ±»Ωœ…Ÿº˚£¨«“‘› ±Œﬁ∑® µœ÷
+        data[size + i] = GUARD_NUM; /// Ê£ÄÊü•Ë∂äÁïåÂÜôÔºåÂêëÂâçË∂äÁïåÁöÑÊØîËæÉÂ∞ëËßÅÔºå‰∏îÊöÇÊó∂Êó†Ê≥ïÂÆûÁé∞
     }
 
+    SIZE_T* frame_pointer = NULL;
+    FRAMEPOINTER(frame_pointer);
+
+    auto_heap_guard guard(nullptr);
     if (_hook_state._enabled) {
         _the_manager->on_memory_realloc(ptr, data, size);
     }
@@ -231,15 +267,17 @@ void hook_free(void* ptr)
     if (_hook_state._initializing)
         return free_func(ptr);
 
-    auto_heap_guard guard(nullptr);
     if (ptr == nullptr)
         return;
 
-    if (_hook_state._enabled) {
-        _the_manager->on_memory_free(ptr);
-    } else {
-        free_func(ptr);
+    {
+        auto_heap_guard guard(nullptr);
+        if (_hook_state._enabled) {
+            return _the_manager->on_memory_free(ptr);
+        }
     }
+
+    free_func(ptr);
 }
 
 memory_watcher::memory_watcher()
@@ -247,6 +285,8 @@ memory_watcher::memory_watcher()
     memset(_block_slots, 0, sizeof(_block_slots));
     _delay_free_head = nullptr;
     _delay_free_tail = nullptr;
+
+    _not_freed_count = 0;
 
     _delay_free_block = 0;
     _delay_free_memory_size = 0;
@@ -280,7 +320,7 @@ memory_block* memory_watcher::block_pool_alloc()
         return block;
     }
 
-    /// ≥¢ ‘ Õ∑≈µÙdelay_free¿Ô√Êµƒ‘™Àÿ
+    /// Â∞ùËØïÈáäÊîæÊéâdelay_freeÈáåÈù¢ÁöÑÂÖÉÁ¥†
     do_delay_free(true);
 
     if (_block_header != nullptr) {
@@ -289,7 +329,7 @@ memory_block* memory_watcher::block_pool_alloc()
         return block;
     }
 
-    /// ø…ƒ‹ø…“‘µ»∆‰À˚µÿ∑Ω Õ∑≈
+    /// ÂèØËÉΩÂèØ‰ª•Á≠âÂÖ∂‰ªñÂú∞ÊñπÈáäÊîæ
     return nullptr;
 }
 
@@ -368,7 +408,7 @@ void memory_watcher::on_memory_alloc(void* start_ptr, uint32_t length)
     if (block == nullptr)
         return;
 
-    /// Õ≥º∆–≈œ¢
+    /// ÁªüËÆ°‰ø°ÊÅØ
     _current_block_count++;
     _current_memory_size += length;
 
@@ -395,7 +435,7 @@ void memory_watcher::on_memory_realloc(void* old_ptr, void* new_ptr, uint32_t ne
 {
     do_delay_free();
 
-    /// ≤È’“Ãıƒø
+    /// Êü•ÊâæÊù°ÁõÆ
     uint32_t slot_index = find_block(old_ptr);
     memory_block* prev = nullptr;
     memory_block* curr = _block_slots[slot_index];
@@ -403,7 +443,7 @@ void memory_watcher::on_memory_realloc(void* old_ptr, void* new_ptr, uint32_t ne
         prev = curr; curr = curr->_next;
     }
 
-    /// –ﬁ∏ƒÃıƒø
+    /// ‰øÆÊîπÊù°ÁõÆ
     if (old_ptr == new_ptr && curr != nullptr) {
         _current_memory_size -= curr->_length;
         _current_memory_size += new_length;
@@ -417,7 +457,7 @@ void memory_watcher::on_memory_realloc(void* old_ptr, void* new_ptr, uint32_t ne
         return;
     }
 
-    /// “∆≥˝Ãıƒø
+    /// ÁßªÈô§Êù°ÁõÆ
     if (curr != nullptr) {
         if (prev == nullptr) {
             _block_slots[slot_index] = curr->_next;
@@ -430,7 +470,7 @@ void memory_watcher::on_memory_realloc(void* old_ptr, void* new_ptr, uint32_t ne
         block_pool_free(curr);
     }
 
-    /// ÃÌº”Ãıƒø
+    /// Ê∑ªÂä†Êù°ÁõÆ
     on_memory_alloc(new_ptr, new_length);
 }
 
@@ -450,14 +490,15 @@ void memory_watcher::on_memory_free(void* start_ptr)
     }
 
     if (curr == nullptr) {
-        /// ºÏ≤Èdouble free
+        /// Ê£ÄÊü•double free
         memory_block* block = check_is_delay_free(start_ptr);
         if (block != nullptr) {
             report_heap_corruption(&curr->_call_stack);
         }
 
-        /// ø…ƒ‹ «µ˜”√∆‰À˚∫Ø ˝∑÷≈‰≥ˆ¿¥µƒ
-        return free_func(start_ptr);;
+        /// ÂèØËÉΩÊòØË∞ÉÁî®ÂÖ∂‰ªñÂáΩÊï∞ÂàÜÈÖçÂá∫Êù•ÁöÑ
+        _not_freed_count++;
+        return free_func(start_ptr);
     }
 
     if (prev == nullptr) {
@@ -469,7 +510,7 @@ void memory_watcher::on_memory_free(void* start_ptr)
     curr->_free_time = GetTickCount();
     curr->_next = nullptr;
 
-    /// ∑≈»Îdelay free∂”¡–
+    /// ÊîæÂÖ•delay freeÈòüÂàó
     _delay_free_block++;
     _delay_free_memory_size += curr->_length;
 
@@ -480,12 +521,12 @@ void memory_watcher::on_memory_free(void* start_ptr)
         _delay_free_tail = curr;
     }
 
-    /// Õ≥º∆–≈œ¢
+    /// ÁªüËÆ°‰ø°ÊÅØ
     _current_block_count--;
     _current_memory_size -= curr->_length;
     output_memory_info();
 
-    /// ¡¢º¥…æ≥˝
+    /// Á´ãÂç≥Âà†Èô§
     /// do_delay_free(true);
 }
 
@@ -522,7 +563,7 @@ void memory_watcher::report_heap_leak()
     _hook_state._enabled = false;
 
     hook_state_prepare_stack_info();
-    OutputDebugStringA("report_heap_leak");
+    OutputDebugStringA("report_heap_leak\n");
 
     uint32_t index = 0;
     for (auto block : _block_slots) {
@@ -545,7 +586,11 @@ void memory_watcher::output_memory_info(bool force)
     if (force || _last_output_time + 10000 < tick || tick < _last_output_time) {
         _last_output_time = tick;
 
-        _hook_state._enabled = false; /// ∑¿÷πƒ⁄≤ø π”√∫Ø ˝‘Ï≥…«∂Ã◊
+        _hook_state._enabled = false; /// Èò≤Ê≠¢ÂÜÖÈÉ®‰ΩøÁî®ÂáΩÊï∞ÈÄ†ÊàêÂµåÂ•ó
+
+        char not_freed_count_buffer[64];
+        sprintf_s(not_freed_count_buffer, "not_freed_count, %d\n", _not_freed_count);
+        OutputDebugStringA(not_freed_count_buffer);
 
         char delay_free_block_count_buffer[64];
         sprintf_s(delay_free_block_count_buffer, "delay_free_block_count, %d\n", _delay_free_block);
